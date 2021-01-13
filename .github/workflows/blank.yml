@@ -1,0 +1,148 @@
+
+import os, zipfile
+import shutil
+import cv2
+import glob
+import pandas as pd
+from pylibdmtx import pylibdmtx
+import psycopg2
+import time
+import re
+import xlsxwriter
+from os import path
+
+startTime = time.time()
+
+my_dir = 'C:\\OPR\\New folder'
+extension = ".zip"
+
+# sort the images in an order
+def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
+    return [
+        int(text)
+        if text.isdigit() else text.lower()
+        for text in _nsre.split(s)]
+
+os.chdir(my_dir) # change directory from working dir to dir with files
+
+for item in os.listdir(my_dir): # loop through items in dir
+    if item.endswith(extension):# check for ".zip" extension
+        with zipfile.ZipFile(item) as zip_file:
+            for member in zip_file.namelist():
+                filename = os.path.basename(member)
+                # skip directories
+                if not filename:
+                    continue
+
+                # copy file (taken from zipfile's extract)
+                source = zip_file.open(member)
+                target = open(os.path.join(my_dir, filename), "wb")
+                with source, target:
+                    shutil.copyfileobj(source, target)
+        os.remove(item)
+
+# code for scanning
+
+img_dir = my_dir # Enter Directory of all images
+data_path = os.path.join(img_dir,'*g')
+
+for filename in os.listdir(img_dir):
+    if filename.endswith(".xlsx"):
+        os.remove(os.path.join(img_dir, filename))
+
+# renaming the files
+i = 1
+for filename in os.listdir(img_dir):
+    if filename.startswith("code"):
+        i = i + 1
+        continue
+    os.rename(os.path.join(img_dir,filename), os.path.join(img_dir,'code'+str(i)+'.jpg'))
+    i = i +1
+
+files = glob.glob(data_path)
+files= sorted(files, key=natural_sort_key)
+
+data = []
+result=[]
+
+for f1 in files:
+    img = cv2.imread(f1,cv2.IMREAD_UNCHANGED)
+    img.sort()  # ADD THIS LIN
+    scale_percent =70# percent of original size
+    width = int(img.shape[1] * scale_percent / 100)
+    height = int(img.shape[0] * scale_percent / 100)
+    dim = (width, height)
+    # resize image
+    img = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    msg = pylibdmtx.decode(thresh)
+    print(msg)
+    data.append(img)
+    result.append(msg)
+
+
+# now removing the unecessary parts and only keeping the coding part
+
+data_list = list()
+for entry in result:
+    for barcode in entry:
+        data_list.append(barcode.data.decode("utf-8"))
+
+
+# to know which images have not been scanend
+# search for unscannedd pics excel , you will get all pic numbers heir
+
+unscanned_pics=pd.DataFrame(result)
+unscanned_pics=unscanned_pics[unscanned_pics[0].isnull()].index.tolist()
+unscanned_pics=pd.DataFrame(unscanned_pics)
+unscanned_pics=unscanned_pics+1
+writer = pd.ExcelWriter('unscanned_pics.xlsx', engine='xlsxwriter')
+unscanned_pics.to_excel(writer, sheet_name='welcome', index=False)
+writer.save()
+
+# converting to sql aggreable foramt
+sql_foramt=([s.replace('AZ:', '') for s in data_list])
+tuples_to_insert = ','.join(["('" + v + "')" for v in sql_foramt])
+
+conn = psycopg2.connect(dbname='XUZ',
+                       host='ZYZ',
+                       port='ZYZ',user="ZYZ'",password="ZYZ'")
+
+cur = conn.cursor()
+
+sql = "CREATE TEMP TABLE ##Validation_Marc ( Codes varchar(250) )"
+cur.execute(sql)
+conn.commit()
+
+mylist=sql_foramt
+
+sql = "INSERT INTO ZYZ' VALUES {}"
+cur.execute(query = sql.format(', '.join(['(%s)' for _ in mylist])), # FORMAT PLACEHOLDERS
+            vars = mylist)                                           # BIND PARAMS
+conn.commit()
+
+
+# using left joint with tables to get asin results
+df=df.merge(ASIN,on="GTIN",how="left")
+
+columns = [0,'ASIN', 'GTIN']
+df=pd.DataFrame(df,columns=columns)
+
+cur.close()
+# code for exporting answer to excel
+
+
+df = pd.DataFrame(df)
+writer = pd.ExcelWriter('test.xlsx', engine='xlsxwriter')
+df.to_excel(writer, sheet_name='welcome', index=False)
+writer.save()
+
+print("total number of unscanned images=" ,len(unscanned_pics))
+print(("total numebr of scanned pics after removing duplicates=",len(df)))
+
+print ('The script took {0} second !'.format(time.time() - startTime))
+
+
+
+   
